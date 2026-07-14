@@ -1,0 +1,4 @@
+/auth_service/      @backend-team
+/frontend-client/   @frontend-team
+/Dockerfile         @platform-team
+/docs/              @docs-team

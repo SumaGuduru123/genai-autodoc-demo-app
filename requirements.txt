@@ -1,3 +1,39 @@
-fastapi
-uvicorn
-pydantic
+# Python runtime dependencies
+# All versions pinned to latest stable as of 2025-07.
+# Run `pip install -r requirements.txt` to install.
+#
+# Dependency scanning: run `pip-audit -r requirements.txt` before merging changes.
+
+# -------------------------------------------------------------------
+# Web framework
+# -------------------------------------------------------------------
+fastapi==0.115.14
+uvicorn[standard]==0.34.3
+
+# -------------------------------------------------------------------
+# Authentication helpers
+# -------------------------------------------------------------------
+# bcrypt is used for password hashing in production (stub in demo)
+bcrypt==4.3.0
+
+# -------------------------------------------------------------------
+# Data validation
+# -------------------------------------------------------------------
+pydantic==2.11.7
+
+# -------------------------------------------------------------------
+# Async HTTP client (used by the health-check endpoint)
+# -------------------------------------------------------------------
+httpx==0.28.1
+
+# -------------------------------------------------------------------
+# Structured logging
+# -------------------------------------------------------------------
+structlog==25.3.0
+
+# -------------------------------------------------------------------
+# Development / testing (not installed in the container image)
+# -------------------------------------------------------------------
+# pytest==8.3.5
+# pytest-asyncio==0.25.3
+# pip-audit==2.9.0

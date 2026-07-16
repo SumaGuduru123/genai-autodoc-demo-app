@@ -1,4 +1,48 @@
-/auth_service/      @backend-team
-/frontend-client/   @frontend-team
-/Dockerfile         @platform-team
-/docs/              @docs-team
+# CODEOWNERS
+#
+# Each line is a file-pattern followed by one or more owners (GitHub usernames
+# or team slugs in the form @org/team).  The last matching pattern wins.
+#
+# The auto-doc SOP generator reads this file to populate the "Owner" and
+# "Escalation Path" fields in generated incident runbooks.
+#
+# Format:
+#   <path-pattern>    <primary-owner>   [<secondary-owner> ...]
+
+# -----------------------------------------------------------------------
+# Global fallback — applies to any file not matched by a more specific rule
+# -----------------------------------------------------------------------
+*                           @genai-autodoc-demo/core-eng
+
+# -----------------------------------------------------------------------
+# Auth service — owned by the Security & Identity team
+# -----------------------------------------------------------------------
+/auth_service/              @genai-autodoc-demo/security-identity
+/auth_service/auth.py       @genai-autodoc-demo/security-identity  @alice
+/auth_service/user.py       @genai-autodoc-demo/security-identity  @alice
+
+# -----------------------------------------------------------------------
+# Frontend client — owned by the Frontend Platform team
+# -----------------------------------------------------------------------
+/frontend-client/           @genai-autodoc-demo/frontend-platform
+/frontend-client/apiClient.ts   @genai-autodoc-demo/frontend-platform  @bob_ops
+/frontend-client/authHooks.ts   @genai-autodoc-demo/frontend-platform  @bob_ops
+
+# -----------------------------------------------------------------------
+# Infrastructure & deployment — owned by the Platform Engineering team
+# -----------------------------------------------------------------------
+/Dockerfile                 @genai-autodoc-demo/platform-eng
+/docker-compose.yml         @genai-autodoc-demo/platform-eng
+/.github/                   @genai-autodoc-demo/platform-eng
+
+# -----------------------------------------------------------------------
+# Documentation — owned by the Tech Writing team with eng co-owner
+# -----------------------------------------------------------------------
+/docs/                      @genai-autodoc-demo/tech-writing  @genai-autodoc-demo/core-eng
+
+# -----------------------------------------------------------------------
+# Dependency manifests — require security review on changes
+# -----------------------------------------------------------------------
+/requirements.txt           @genai-autodoc-demo/security-identity  @genai-autodoc-demo/core-eng
+/package.json               @genai-autodoc-demo/security-identity  @genai-autodoc-demo/frontend-platform
+/package-lock.json          @genai-autodoc-demo/security-identity  @genai-autodoc-demo/frontend-platform

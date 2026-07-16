@@ -1,0 +1,62 @@
+# Git ignore rules for genai-autodoc-demo-app
+# Never commit secrets, build artifacts, or generated environment files
+
+# -----------------------------------------------------------------------
+# Secrets & environment — NEVER commit these
+# -----------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+vault/
+
+# -----------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# -----------------------------------------------------------------------
+# Node / TypeScript
+# -----------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dist/
+*.tsbuildinfo
+
+# -----------------------------------------------------------------------
+# Docker
+# -----------------------------------------------------------------------
+.dockerignore
+
+# -----------------------------------------------------------------------
+# IDE / OS artifacts
+# -----------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

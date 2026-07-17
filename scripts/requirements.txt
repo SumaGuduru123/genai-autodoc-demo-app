@@ -1,0 +1,3 @@
+# Dependencies for scripts/doc_agent.py
+# The main requirements.txt at the repo root is for the FastAPI app — do not modify it.
+requests>=2.31.0

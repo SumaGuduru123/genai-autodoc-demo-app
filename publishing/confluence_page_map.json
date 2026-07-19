@@ -1,0 +1,19 @@
+{
+  "_instructions": {
+    "description": "Maps generated doc filenames to Confluence page IDs.",
+    "how_to_get_page_id": [
+      "1. Open the Confluence page in your browser",
+      "2. Click the '...' menu (top right) → Page Information",
+      "3. The page ID appears in the URL: /pages/<PAGE_ID>/info",
+      "OR: Use the create_page command to create pages automatically:",
+      "   python publishing/confluence.py --create-page --title 'Auth Incident Runbook' --file docs/sops/auth_incident_runbook.md"
+    ],
+    "note": "Remove the _instructions key before running the publisher"
+  },
+  "auth_incident_runbook.md": "REPLACE_WITH_CONFLUENCE_PAGE_ID",
+  "user_management_runbook.md": "REPLACE_WITH_CONFLUENCE_PAGE_ID",
+  "deployment_runbook.md": "REPLACE_WITH_CONFLUENCE_PAGE_ID",
+  "auth_service_reference.md": "REPLACE_WITH_CONFLUENCE_PAGE_ID",
+  "frontend_client_reference.md": "REPLACE_WITH_CONFLUENCE_PAGE_ID",
+  "test_numbers_reference.md": "REPLACE_WITH_CONFLUENCE_PAGE_ID"
+}

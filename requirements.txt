@@ -37,3 +37,10 @@ structlog==25.3.0
 # pytest==8.3.5
 # pytest-asyncio==0.25.3
 # pip-audit==2.9.0
+
+# -------------------------------------------------------------------
+# Confluence publisher (publishing/confluence.py)
+# -------------------------------------------------------------------
+# requests is already a transitive dependency of httpx but listed
+# explicitly here so the publisher can be run standalone.
+requests==2.32.3

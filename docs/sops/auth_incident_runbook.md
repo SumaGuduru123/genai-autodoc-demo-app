@@ -4,7 +4,7 @@
 > Do not edit manually — this file is overwritten on each pipeline run.  
 > **Owner:** `@genai-autodoc-demo/security-identity` · `@alice`  
 > **On-call Contact:** `@alice`  
-> **Last Updated:** 2025-07-14
+> **Last Updated:** 2025-07-15
 
 ---
 

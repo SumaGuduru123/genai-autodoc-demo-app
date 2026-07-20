@@ -70,12 +70,11 @@ Before starting this procedure, ensure you have:
 ### If error code is `VALIDATION_ERROR` (HTTP 422)
 
 - **Symptom:** Create or update call fails with one of the following messages:
-  - *"Username contains invalid special character(s): '@', '!'"* — username has disallowed characters
-  - *"Username must be 3–64 characters"* — username is too short, too long, or empty
+  - *"Username must be 3–64 characters: letters, digits, _ or -"* — username is invalid (wrong length, disallowed characters, or both)
   - *"Invalid email address"* — email is malformed
   - *"Unknown role(s)"* — an unrecognised role string was supplied
 - **Then:** Relay the exact validation message to the caller.
-  - For special character errors: the username must contain only letters (a–z, A–Z), digits (0–9), underscores (`_`), or hyphens (`-`). Spaces, `@`, `!`, `#`, `$`, `%` and all other symbols are rejected. Ask the caller to remove the offending characters listed in the error message.
+  - For username errors: the username must be 3–64 characters and contain only letters (a–z, A–Z), digits (0–9), underscores (`_`), or hyphens (`-`). Spaces, `@`, `!`, `#`, `$`, `%` and all other symbols are rejected. Note: the error message no longer lists individual offending characters — ask the caller to review their full username string.
   - For length errors: username must be 3–64 characters.
   - For email errors: must be a valid RFC-5322 address.
   - For role errors: allowed values are `viewer`, `developer`, `support`, `ops`, `admin`.

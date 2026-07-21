@@ -1,33 +1,40 @@
+# .github/workflows/autodoc.yml
+#
+# Triggers on every push to `main`.
+# 1. Detects which .py / .ts files changed in the commit.
+# 2. Installs Ollama + pulls llama3 inside the runner.
+# 3. Runs scripts/doc_agent.py to generate per-file reference docs.
+# 4. Commits any updated docs/generated/ files back to main.
+#
+# [skip ci] in the commit message prevents this workflow from
+# re-triggering itself after the docs commit.
+
 name: Auto-Doc Agent
 
-# Trigger only on pushes to main.
-# [skip ci] in commit messages prevents this workflow from re-triggering
-# when the agent itself commits the updated docs back to main.
 on:
   push:
     branches:
       - main
+    # Only run when source files or the agent script itself change.
+    paths:
+      - "auth_service/**/*.py"
+      - "frontend-client/**/*.ts"
+      - "scripts/doc_agent.py"
+      - "scripts/requirements.txt"
 
 jobs:
   generate-docs:
-    name: Generate Technical Documentation
+    name: Generate reference docs
     runs-on: ubuntu-latest
-
-    # Prevent concurrent runs — only one doc generation at a time
-    concurrency:
-      group: autodoc-${{ github.ref }}
-      cancel-in-progress: true
 
     steps:
       # -----------------------------------------------------------------------
-      # 1. Checkout repo
-      #    fetch-depth: 2 is required so `git diff HEAD~1 HEAD` works correctly
+      # 1. Checkout with depth 2 so git diff HEAD~1 HEAD works
       # -----------------------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       # -----------------------------------------------------------------------
       # 2. Set up Python
@@ -56,28 +63,22 @@ jobs:
         run: ollama serve &
 
       # -----------------------------------------------------------------------
-      # 6. Wait for Ollama to be ready
-      #    Poll the /api/tags endpoint until it responds (max 30s)
+      # 6. Wait for Ollama to be ready (up to 30 s)
       # -----------------------------------------------------------------------
       - name: Wait for Ollama to be ready
         run: |
-          echo "Waiting for Ollama to start..."
-          for i in $(seq 1 15); do
-            if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
-              echo "Ollama is ready."
-              exit 0
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:11434/ > /dev/null 2>&1; then
+              echo "Ollama is ready after ${i}s"
+              break
             fi
-            echo "  Attempt $i/15 — not ready yet, waiting 2s..."
-            sleep 2
+            sleep 1
           done
-          echo "ERROR: Ollama did not start in time."
-          exit 1
 
       # -----------------------------------------------------------------------
-      # 7. Pull the Ollama model
-      #    llama3 is a good balance of quality and speed for documentation
+      # 7. Pull the model
       # -----------------------------------------------------------------------
-      - name: Pull Ollama model
+      - name: Pull llama3 model
         run: ollama pull llama3
 
       # -----------------------------------------------------------------------
@@ -85,23 +86,21 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Run doc agent
         run: python scripts/doc_agent.py
+        env:
+          OLLAMA_URL: "http://localhost:11434/api/generate"
+          OLLAMA_MODEL: "llama3"
 
       # -----------------------------------------------------------------------
-      # 9. Commit and push updated docs if anything changed
-      #    [skip ci] in the commit message prevents infinite workflow loop
+      # 9. Commit and push updated docs (only if something changed)
       # -----------------------------------------------------------------------
-      - name: Commit and push updated docs
+      - name: Commit updated docs
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add docs/generated/TECHNICAL_DOCS.md
-
-          # Only commit if there are staged changes
+          git add docs/generated/
           if git diff --cached --quiet; then
-            echo "No documentation changes to commit."
+            echo "No doc changes to commit."
           else
-            git commit -m "docs: auto-update TECHNICAL_DOCS.md [skip ci]"
+            git commit -m "docs: auto-update reference docs [skip ci]"
             git push origin main
-            echo "Documentation committed and pushed."
           fi

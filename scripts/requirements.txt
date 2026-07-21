@@ -1,3 +1,8 @@
-# Dependencies for scripts/doc_agent.py
-# The main requirements.txt at the repo root is for the FastAPI app — do not modify it.
+# scripts/requirements.txt
+#
+# Python dependencies for scripts/doc_agent.py only.
+# Install with: pip install -r scripts/requirements.txt
+#
+# Do NOT add runtime app dependencies here — those live in /requirements.txt.
+
 requests>=2.31.0

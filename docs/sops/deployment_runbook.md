@@ -4,7 +4,7 @@
 > Do not edit manually — this file is overwritten on each pipeline run.  
 > **Owner:** `@genai-autodoc-demo/platform-eng`  
 > **On-call Contact:** `@genai-autodoc-demo/platform-eng`  
-> **Last Updated:** 2025-07-14
+> **Last Updated:** 2025-01-18
 
 ---
 
@@ -18,45 +18,63 @@ This SOP describes how to build and deploy the GenAI AutoDoc Demo App container 
 
 Before deploying, verify the following:
 
-1. **Environment variables are set.** The following variables must be present in the target environment before the container starts:
+### 1. Environment Variables
 
-   | Variable | Required | Default | Description |
-   |---|---|---|---|
-   | `JWT_SECRET` | ✅ Yes | None | HMAC-SHA256 signing key — must be a strong random value |
-   | `TOKEN_TTL` | No | `3600` | Access token lifetime in seconds |
-   | `REFRESH_TTL` | No | `86400` | Refresh session lifetime in seconds |
-   | `MAX_LOGIN_ATTEMPTS` | No | `5` | Failed login attempts before account lock |
+The following variables must be present in the target environment before the container starts:
 
-2. **Base images are accessible.** The build uses `registry.redhat.io/ubi9/python-311-minimal` and `registry.redhat.io/ubi9/nodejs-20-minimal`. Confirm that the build environment has authenticated access to `registry.redhat.io`.
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `JWT_SECRET` | ✅ Yes | None | HMAC-SHA256 signing key — must be a strong random value. Generate with: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `TOKEN_TTL` | No | `3600` | Access token lifetime in seconds (default: 1 hour) |
+| `REFRESH_TTL` | No | `86400` | Refresh session lifetime in seconds (default: 24 hours) |
+| `MAX_LOGIN_ATTEMPTS` | No | `5` | Failed login attempts before account lock |
+| `CONFLUENCE_URL` | No | — | Confluence Cloud instance URL for documentation publishing (e.g., `https://yourorg.atlassian.net/`). Used by `publishing/confluence.py`. |
+| `CONFLUENCE_EMAIL` | No | — | Email address of the Confluence API user (e.g., `publisher@example.com`). Required for Confluence publishing. |
+| `CONFLUENCE_TOKEN` | No | — | Confluence Cloud API token. Generate at: [https://id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens). **Never commit this value to version control** — pass via GitHub Actions secrets or encrypted config management. |
+| `CONFLUENCE_SPACE_KEY` | No | — | Confluence space key where documentation pages will be published (e.g., `SOP`, `DOCS`). |
 
-3. **`requirements.txt` and `package.json` are up to date.** Run a local `pip-audit -r requirements.txt` and `npm audit` before merging any dependency changes.
+> **Security Warning:**  
+> `.env.example` contains placeholder values for the Confluence variables. **Do not commit real API tokens to `.env.example` or any source-controlled file.** Use `.env` (gitignored) for local development, and GitHub Actions secrets or a secrets manager for CI/CD pipelines.
 
-4. **TypeScript compiles cleanly.** Run `npx tsc --project tsconfig.json --noEmit` locally and confirm zero errors before pushing.
+### 2. Base Images
 
-5. **Confirm the target port is available.** The container binds to `127.0.0.1:8000`. In Kubernetes/OpenShift, confirm the Service and Ingress definitions are correct before deploying.
+The build uses `registry.redhat.io/ubi9/python-311-minimal` and `registry.redhat.io/ubi9/nodejs-20-minimal`. Confirm that the build environment has authenticated access to `registry.redhat.io`.
+
+### 3. Dependencies
+
+- **Python dependencies:** Run `pip-audit -r requirements.txt` before merging any changes to `requirements.txt`. All dependencies must pass security audit with no known CVEs above LOW severity.
+- **Node dependencies:** Run `npm audit` in the `frontend-client/` directory before merging any changes to `package.json` or `package-lock.json`.
+
+### 4. TypeScript Compilation
+
+Run `npx tsc --project tsconfig.json --noEmit` locally and confirm zero errors before pushing. The Docker build will fail if TypeScript compilation fails.
+
+### 5. Port Availability
+
+The container binds to `127.0.0.1:8000`. In Kubernetes/OpenShift, confirm the Service and Ingress definitions are correct before deploying.
 
 ---
 
 ## Deployment Steps
 
-1. Pull the latest code from the `main` branch:
-   ```
+1. **Pull the latest code from the `main` branch:**
+   ```bash
    git pull origin main
    ```
 
-2. Build the Docker image using the multi-stage Dockerfile:
-   ```
+2. **Build the Docker image using the multi-stage Dockerfile:**
+   ```bash
    docker build -t genai-autodoc-demo-app:latest .
    ```
    The build runs three stages: Python dependency installation, Node.js TypeScript compilation, and the final minimal runtime image. Expect 3–8 minutes on first build (dependency download). Subsequent builds are faster due to layer caching.
 
-3. Confirm the image was built successfully:
-   ```
+3. **Confirm the image was built successfully:**
+   ```bash
    docker images genai-autodoc-demo-app
    ```
 
-4. Run the container with required environment variables:
-   ```
+4. **Run the container with required environment variables:**
+   ```bash
    docker run -d \
      --name genai-autodoc-demo \
      -p 8000:8000 \
@@ -65,29 +83,41 @@ Before deploying, verify the following:
      -e REFRESH_TTL=86400 \
      genai-autodoc-demo-app:latest
    ```
-
-5. Verify the healthcheck passes. The Docker healthcheck pings `http://127.0.0.1:8000/health` every 30 seconds with a 5-second timeout. Check health status:
+   If you are testing Confluence publishing, also pass:
+   ```bash
+   -e CONFLUENCE_URL=https://yourorg.atlassian.net/ \
+   -e CONFLUENCE_EMAIL=publisher@example.com \
+   -e CONFLUENCE_TOKEN=<your-api-token> \
+   -e CONFLUENCE_SPACE_KEY=SOP
    ```
+
+5. **Verify the healthcheck passes.**  
+   The Docker healthcheck pings `http://127.0.0.1:8000/health` every 30 seconds with a 5-second timeout. Check health status:
+   ```bash
    docker inspect --format='{{.State.Health.Status}}' genai-autodoc-demo
    ```
    Wait until status shows `healthy` (up to 15 seconds for the start period).
 
-6. Confirm the API is responding:
-   ```
+6. **Confirm the API is responding:**
+   ```bash
    curl http://localhost:8000/health
    ```
-   Expected response: `{"status": "ok"}`
-
-7. Check the API documentation is accessible at `http://localhost:8000/api/docs`.
-
-8. Tag and push the image to your container registry:
+   Expected response:
+   ```json
+   {"status": "ok"}
    ```
+
+7. **Check the API documentation is accessible:**  
+   Open [http://localhost:8000/api/docs](http://localhost:8000/api/docs) in a browser. The FastAPI Swagger UI should load.
+
+8. **Tag and push the image to your container registry:**
+   ```bash
    docker tag genai-autodoc-demo-app:latest <registry>/<repo>/genai-autodoc-demo-app:<tag>
    docker push <registry>/<repo>/genai-autodoc-demo-app:<tag>
    ```
 
-9. For Kubernetes or OpenShift deployments, update the image tag in the deployment manifest and apply:
-   ```
+9. **For Kubernetes or OpenShift deployments, update the image tag in the deployment manifest and apply:**
+   ```bash
    kubectl set image deployment/genai-autodoc-demo app=<registry>/<repo>/genai-autodoc-demo-app:<tag>
    kubectl rollout status deployment/genai-autodoc-demo
    ```
@@ -102,8 +132,15 @@ After a successful deployment, the following should be true:
 - `GET /api/docs` serves the FastAPI Swagger UI
 - `POST /auth/login` returns HTTP 200 with a `TokenPair` for valid demo credentials (`alice` / `bob_ops`)
 - Docker healthcheck status is `healthy`
-- Container is running as non-root user (UID 1001) — verify with `docker exec genai-autodoc-demo id`
-- No errors in the container logs for the first 60 seconds: `docker logs genai-autodoc-demo`
+- Container is running as non-root user (UID 1001) — verify with:
+  ```bash
+  docker exec genai-autodoc-demo id
+  ```
+  Expected output: `uid=1001(default) gid=0(root) groups=0(root)`
+- No errors in the container logs for the first 60 seconds:
+  ```bash
+  docker logs genai-autodoc-demo
+  ```
 
 ---
 
@@ -111,24 +148,27 @@ After a successful deployment, the following should be true:
 
 If the deployment introduces a regression:
 
-1. Identify the previous known-good image tag from the container registry or the git history (`git log --oneline Dockerfile`).
-
-2. Stop and remove the current container:
+1. **Identify the previous known-good image tag** from the container registry or the git history:
+   ```bash
+   git log --oneline Dockerfile
    ```
+
+2. **Stop and remove the current container:**
+   ```bash
    docker stop genai-autodoc-demo && docker rm genai-autodoc-demo
    ```
 
-3. For Kubernetes/OpenShift, roll back using the built-in rollout history:
-   ```
+3. **For Kubernetes/OpenShift, roll back using the built-in rollout history:**
+   ```bash
    kubectl rollout undo deployment/genai-autodoc-demo
    kubectl rollout status deployment/genai-autodoc-demo
    ```
 
-4. For bare Docker deployments, re-run the `docker run` command from Step 4 of Deployment Steps using the previous image tag.
+4. **For bare Docker deployments, re-run the `docker run` command from Step 4** of Deployment Steps using the previous image tag.
 
-5. Verify the rollback by repeating the Expected Outcomes checks above.
+5. **Verify the rollback** by repeating the Expected Outcomes checks above.
 
-6. Notify `@genai-autodoc-demo/platform-eng` and open a post-incident review ticket. Include the failing image tag, observed symptoms, and the rollback tag used.
+6. **Notify `@genai-autodoc-demo/platform-eng`** and open a post-incident review ticket. Include the failing image tag, observed symptoms, and the rollback tag used.
 
 ---
 
@@ -141,5 +181,5 @@ If the deployment introduces a regression:
 | **Target Environment** | Docker / Kubernetes / OpenShift |
 | **Base Image** | `registry.redhat.io/ubi9/python-311-minimal` |
 | **Exposed Port** | `8000` |
-| **Last Updated** | 2025-07-14 |
+| **Last Updated** | 2025-01-18 |
 | **Generated By** | Gen AI Auto-Doc pipeline (Bob DocumentationAgent) |

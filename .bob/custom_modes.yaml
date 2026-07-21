@@ -119,6 +119,11 @@ customModes:
         - Never edit source code files (*.py, *.ts). Read only.
         - Never overwrite a doc that is newer than the source file without re-reading both.
         - Do not add commentary or opinions outside the generated Markdown.
+        - Never create placeholder or stub documentation files. If there is nothing to
+          document (no changed files, no content generated), write nothing. A missing file
+          is preferable to an empty or stub file.
+        - Never write to docs/generated/TECHNICAL_DOCS.md. That file has been removed.
+          All Track A output uses the per-file convention: docs/generated/<module_name>_reference.md.
     customInstructions: >-
       STEP-BY-STEP EXECUTION PROCEDURE:
 

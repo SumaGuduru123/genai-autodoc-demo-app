@@ -5,7 +5,8 @@ Auto-documentation agent.
 - Detects which .py and .ts files changed in the latest git commit
 - Reads each changed file's content
 - Calls the local Ollama REST API to generate technical documentation
-- Overwrites docs/generated/TECHNICAL_DOCS.md with the result
+- Writes per-file reference docs to docs/generated/<module_name>_reference.md
+- Never creates placeholder files; exits silently when no files changed
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ import requests
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3")
-OUTPUT_FILE = os.path.join("docs", "generated", "TECHNICAL_DOCS.md")
+OUTPUT_DIR = os.path.join("docs", "generated")
 SUPPORTED_EXTENSIONS = {".py", ".ts"}
 
 
@@ -149,39 +150,46 @@ def call_ollama(prompt: str) -> str:
 # Step 5 — Assemble and write the output file
 # ---------------------------------------------------------------------------
 
-def write_docs(file_docs: list[tuple[str, str]]) -> None:
+def _module_name(filepath: str) -> str:
+    """Derive a module name from a file path (stem of the basename)."""
+    return os.path.splitext(os.path.basename(filepath))[0]
+
+
+def write_doc(filepath: str, doc: str) -> str:
     """
-    Write the combined documentation for all changed files to TECHNICAL_DOCS.md.
+    Write documentation for a single source file to its own reference doc.
+
+    The output path follows the naming convention:
+        docs/generated/<module_name>_reference.md
 
     Parameters
     ----------
-    file_docs:
-        List of (filename, documentation_markdown) tuples.
+    filepath:
+        Path to the source file that was documented.
+    doc:
+        The generated Markdown documentation string.
+
+    Returns
+    -------
+    str
+        The output path that was written.
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    file_list = "\n".join(f"- `{f}`" for f, _ in file_docs)
+    module = _module_name(filepath)
+    output_path = os.path.join(OUTPUT_DIR, f"{module}_reference.md")
 
-    header = f"""# Technical Documentation
+    header = (
+        f"> **Auto-generated** by the doc agent. "
+        f"Do not edit manually — overwritten on the next pipeline run.  \n"
+        f"> **Source:** `{filepath}` · **Last updated:** {now}\n\n---\n\n"
+    )
 
-> **Auto-generated** by the doc agent on every push to `main`. Do not edit manually — changes will be overwritten.
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as fh:
+        fh.write(header + doc + "\n")
 
-**Last updated:** {now}
-
-**Files documented in this run:**
-{file_list}
-
----
-
-"""
-
-    body = "\n\n---\n\n".join(doc for _, doc in file_docs)
-    content = header + body + "\n"
-
-    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as fh:
-        fh.write(content)
-
-    print(f"Written: {OUTPUT_FILE}")
+    print(f"Written: {output_path}")
+    return output_path
 
 
 # ---------------------------------------------------------------------------
@@ -201,23 +209,21 @@ def main() -> None:
     for f in changed:
         print(f"  {f}")
 
-    # 2. Generate documentation for each file
-    file_docs: list[tuple[str, str]] = []
+    # 2. Generate and write documentation for each file individually
+    written: list[str] = []
     for filepath in changed:
         print(f"\nGenerating docs for: {filepath}")
         try:
             code = read_file(filepath)
             prompt = build_prompt(filepath, code)
             doc = call_ollama(prompt)
-            file_docs.append((filepath, doc))
+            out = write_doc(filepath, doc)
+            written.append(out)
             print(f"  Done ({len(doc)} chars)")
         except Exception as exc:
-            print(f"  ERROR: {exc}")
-            file_docs.append((filepath, f"## `{filepath}`\n\n> **Error generating documentation:** {exc}\n"))
+            print(f"  ERROR generating docs for {filepath}: {exc}")
 
-    # 3. Write combined output
-    write_docs(file_docs)
-    print("\n=== Auto-Doc Agent complete ===")
+    print(f"\n=== Auto-Doc Agent complete — {len(written)} file(s) written ===")
 
 
 if __name__ == "__main__":

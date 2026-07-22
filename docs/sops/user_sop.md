@@ -58,7 +58,7 @@ Before starting this procedure, confirm the following:
 ---
 
 ### `DuplicateEmailError` — HTTP 409 · `DUPLICATE_EMAIL`
-**Trigger:** A `create_user` or `update_user` call attempted to register or assign an email address that is already mapped in `_email_index`.
+**Trigger:** A `create_user` or `update_user` call attempted to register or assign an email address already mapped in `_email_index`.
 
 **Resolution:**
 - Confirm whether the existing registration was intentional by looking up the email in the index.
@@ -69,9 +69,11 @@ Before starting this procedure, confirm the following:
 ---
 
 ### `ValidationError` — HTTP 422 · `VALIDATION_ERROR`
-**Trigger:** Raised by `_validate_email`, `_validate_username`, or `_validate_roles` when the supplied value fails the applicable constraint.
+**Trigger:** Raised by `_validate_email`, `_validate_username`, `_validate_no_special_characters`, or `_validate_roles` when the supplied value fails the applicable constraint.
 
 **Username rules:** 3–64 characters, only letters (`a–z`, `A–Z`), digits (`0–9`), underscores (`_`), and hyphens (`-`). Pattern: `^[a-zA-Z0-9_\-]{3,64}$`.
+
+**Special character rules (new):** The `_validate_no_special_characters` helper rejects any value containing characters from the set `[!@#$%^&*(),.?\":{}|<>]`. The error message identifies the specific field and the offending value: `"{field_name} must not contain special characters: '{value}'"`.
 
 **Email rules:** Must match RFC-5322-style pattern `^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`.
 
@@ -80,6 +82,7 @@ Before starting this procedure, confirm the following:
 **Resolution:**
 - Return the `ValidationError` message to the caller — it contains the specific constraint that failed.
 - If the caller is a UI, surface the message directly to the end user for correction.
+- If the error comes from `_validate_no_special_characters`, strip or encode the offending characters in the input before retrying.
 - If the caller is a service, update the request payload to conform to the constraints above and retry.
 
 ---
@@ -114,6 +117,7 @@ Before starting this procedure, confirm the following:
 | `InternalUserError` with unknown root cause | `@genai-autodoc-demo/security-identity`, `@alice` |
 | Data integrity issue (missing records, corrupt index) | `@genai-autodoc-demo/security-identity`, `@alice` |
 | Repeated `PermissionDeniedError` for a legitimate admin | `@genai-autodoc-demo/security-identity` |
+| `ValidationError` from `_validate_no_special_characters` in an automated pipeline | `@genai-autodoc-demo/security-identity` |
 | Any error in production that cannot be resolved within 30 minutes | `@genai-autodoc-demo/security-identity`, `@alice` |
 
 **Primary owner:** `@genai-autodoc-demo/security-identity`  

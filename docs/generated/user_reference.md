@@ -29,7 +29,7 @@ Raised for malformed input (username, email, or roles). `http_status = 422`, `er
 Raised when the caller lacks the required role. `http_status = 403`, `error_code = "PERMISSION_DENIED"`.
 
 #### `InternalUserError`
-Raised for unexpected server-side failures that are not covered by a more specific error class. `http_status = 500`, `error_code = "INTERNAL_USER_ERROR"`.
+Raised for unexpected server-side failures not covered by a more specific error class. `http_status = 500`, `error_code = "INTERNAL_USER_ERROR"`.
 
 ---
 
@@ -57,6 +57,19 @@ Validates `email` against the compiled regex `_EMAIL_RE` (`^[a-zA-Z0-9._%+\-]+@[
 
 #### `_validate_username(username: str) -> None`
 Validates `username` against `_USERNAME_RE` (`^[a-zA-Z0-9_\-]{3,64}$`). Raises `ValidationError` (HTTP 422) if the username does not meet the 3–64 character alphanumeric/underscore/hyphen constraint.
+
+#### `_validate_no_special_characters(value: str, field_name: str = "value") -> None`
+Checks `value` against `_SPECIAL_CHAR_RE` (`[!@#$%^&*(),.?\":{}|<>]`). Raises `ValidationError` (HTTP 422) if any of the listed special characters are found.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `value` | `str` | — | The string to inspect |
+| `field_name` | `str` | `"value"` | Human-readable field label used in the error message |
+
+**Raises:**
+- `ValidationError` (422) — `"{field_name} must not contain special characters: '{value}'"` when a match is found.
+
+**Usage note:** This helper is generic — it can be applied to any string field (username, display name, etc.) by passing the appropriate `field_name` label.
 
 #### `_validate_roles(roles: list[str]) -> None`
 Checks every entry in `roles` against `_ALLOWED_ROLES` (`viewer`, `developer`, `support`, `ops`, `admin`). Raises `ValidationError` (HTTP 422) listing any unknown role strings.
@@ -150,7 +163,7 @@ Returns all user records, optionally filtered to active accounts only.
 | Import | Purpose |
 |---|---|
 | `logging` | Structured event logging via module-level `logger` |
-| `re` | Compiled regex patterns for email and username validation |
+| `re` | Compiled regex patterns: `_EMAIL_RE`, `_USERNAME_RE`, `_SPECIAL_CHAR_RE` |
 | `time` | Unix timestamps for `created_at` and `updated_at` fields |
 | `dataclasses` | `@dataclass` and `field` for the `UserRecord` model |
 | `typing.Optional` | Type annotations for optional parameters |
@@ -162,7 +175,14 @@ Returns all user records, optionally filtered to active accounts only.
 from auth_service.user import (
     create_user, get_user, update_user, delete_user, list_users,
     ValidationError, DuplicateEmailError, PermissionDeniedError,
+    _validate_no_special_characters,
 )
+
+# Validate a field before passing it to create_user
+try:
+    _validate_no_special_characters("alice<dev>", field_name="username")
+except ValidationError as e:
+    print(e)  # username must not contain special characters: 'alice<dev>'
 
 # Create a new user (defaults to "viewer" role)
 user = create_user("alice_dev", "alice@example.com", roles=["developer"])

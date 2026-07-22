@@ -3,11 +3,31 @@ auth_service/user.py
 
 CRUD operations for user accounts.
 Validates all inputs and raises typed errors that map to HTTP status codes.
+
+LDAP authentication
+-------------------
+Set the following environment variables to enable LDAP credential checks via
+:func:`verify_user_credentials`:
+
+    LDAP_URL              ldap(s):// URI  e.g. ``ldaps://ldap.example.com:636``
+    LDAP_BASE_DN          Search base    e.g. ``dc=example,dc=com``
+    LDAP_BIND_DN          Service-account DN for the initial search bind
+    LDAP_BIND_PASSWORD    Service-account password
+    LDAP_USER_ATTR        Attribute matched against *username* (default: ``sAMAccountName``)
+    LDAP_ROLE_ATTR        Multi-valued group attribute       (default: ``memberOf``)
+    LDAP_UID_ATTR         Stable user-id attribute           (default: ``entryUUID``)
+    LDAP_CONN_TIMEOUT     TCP timeout in seconds             (default: ``5``)
+    LDAP_USE_TLS          Set to ``1`` to STARTTLS a plain ldap:// connection
+
+When LDAP_URL is **not** set the function falls back to the local in-memory
+credential store so development/testing works without an LDAP server.
 """
 
 from __future__ import annotations
 
+import hmac
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -60,6 +80,12 @@ class InternalUserError(UserError):
     error_code = "INTERNAL_USER_ERROR"
 
 
+class LDAPAuthError(UserError):
+    """Raised when LDAP credential verification fails (401)."""
+    http_status = 401
+    error_code = "LDAP_AUTH_ERROR"
+
+
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
@@ -81,6 +107,20 @@ class UserRecord:
 
 _users: dict[str, UserRecord] = {}
 _email_index: dict[str, str] = {}  # email → user_id
+
+# ---------------------------------------------------------------------------
+# LDAP configuration (read once at import time; all optional)
+# ---------------------------------------------------------------------------
+
+_LDAP_URL: str = os.environ.get("LDAP_URL", "")
+_LDAP_BASE_DN: str = os.environ.get("LDAP_BASE_DN", "")
+_LDAP_BIND_DN: str = os.environ.get("LDAP_BIND_DN", "")
+_LDAP_BIND_PASSWORD: str = os.environ.get("LDAP_BIND_PASSWORD", "")
+_LDAP_USER_ATTR: str = os.environ.get("LDAP_USER_ATTR", "sAMAccountName")
+_LDAP_ROLE_ATTR: str = os.environ.get("LDAP_ROLE_ATTR", "memberOf")
+_LDAP_UID_ATTR: str = os.environ.get("LDAP_UID_ATTR", "entryUUID")
+_LDAP_CONN_TIMEOUT: int = int(os.environ.get("LDAP_CONN_TIMEOUT", "5"))
+_LDAP_USE_TLS: bool = os.environ.get("LDAP_USE_TLS", "0") == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +159,266 @@ def _validate_roles(roles: list[str]) -> None:
     unknown = set(roles) - _ALLOWED_ROLES
     if unknown:
         raise ValidationError(f"Unknown role(s): {unknown}. Allowed: {_ALLOWED_ROLES}")
+
+
+# ---------------------------------------------------------------------------
+# LDAP helpers
+# ---------------------------------------------------------------------------
+
+def _ldap_extract_roles(entry_attributes: dict) -> list[str]:
+    """
+    Parse role names from the multi-valued ``memberOf`` (or ``LDAP_ROLE_ATTR``)
+    attribute.
+
+    Each value is a full DN such as
+    ``CN=developers,OU=groups,DC=example,DC=com``.
+    Only the ``CN`` segment is kept and lower-cased so it can be compared
+    against :data:`_ALLOWED_ROLES`.  Unknown role names are silently dropped;
+    if nothing matches ``["viewer"]`` is returned as the safe default.
+    """
+    raw: list[str] = entry_attributes.get(_LDAP_ROLE_ATTR) or []
+    roles: list[str] = []
+    for dn_value in raw:
+        for part in str(dn_value).split(","):
+            part = part.strip()
+            if part.lower().startswith("cn="):
+                candidate = part[3:].lower()
+                if candidate in _ALLOWED_ROLES:
+                    roles.append(candidate)
+                break
+    return roles if roles else ["viewer"]
+
+
+def ldap_authenticate(username: str, password: str) -> UserRecord:
+    """
+    Verify *username* / *password* against the configured LDAP directory and
+    return a :class:`UserRecord` hydrated from the directory entry.
+
+    Workflow
+    --------
+    1. Bind with the service account (``LDAP_BIND_DN``) to search for the
+       user's DN using the filter ``(<LDAP_USER_ATTR>=<username>)``.
+    2. Attempt a second bind with the found DN and the supplied *password* to
+       verify the credential.
+    3. Extract ``LDAP_UID_ATTR`` and ``LDAP_ROLE_ATTR`` from the entry and
+       return a synthetic :class:`UserRecord`.
+
+    Parameters
+    ----------
+    username:
+        Login name matched against ``LDAP_USER_ATTR`` in the directory.
+    password:
+        Plain-text password (must be sent over TLS/LDAPS).
+
+    Returns
+    -------
+    UserRecord
+        Populated with ``user_id``, ``username``, ``email`` (empty string when
+        not present in the directory), and ``roles`` extracted from
+        ``LDAP_ROLE_ATTR``.
+
+    Raises
+    ------
+    LDAPAuthError
+        HTTP 401 — user not found in the directory or password is wrong.
+    PermissionDeniedError
+        HTTP 403 — the directory reports the account is disabled or locked.
+    InternalUserError
+        HTTP 500 — LDAP connectivity or unexpected protocol error.
+    """
+    try:
+        import ldap3  # optional dependency — only required when LDAP is used
+        from ldap3.core.exceptions import LDAPBindError, LDAPException
+        from ldap3.utils.conv import escape_filter_chars
+    except ImportError as exc:
+        raise InternalUserError(
+            "ldap3 package is not installed. "
+            "Add it to your dependencies to enable LDAP authentication."
+        ) from exc
+
+    # --- build server object -----------------------------------------------
+    use_ssl = _LDAP_URL.startswith("ldaps://")
+    tls = ldap3.Tls(validate=ldap3.CERT_REQUIRED) if use_ssl else None
+    server = ldap3.Server(
+        _LDAP_URL,
+        connect_timeout=_LDAP_CONN_TIMEOUT,
+        use_ssl=use_ssl,
+        tls=tls,
+        get_info=ldap3.NONE,
+    )
+
+    auto_bind = (
+        ldap3.AUTO_BIND_TLS_BEFORE_BIND if _LDAP_USE_TLS else ldap3.AUTO_BIND_NO_TLS
+    )
+
+    # --- step 1: service-account bind + user search ------------------------
+    try:
+        svc_conn = ldap3.Connection(
+            server,
+            user=_LDAP_BIND_DN,
+            password=_LDAP_BIND_PASSWORD,
+            auto_bind=auto_bind,
+            raise_exceptions=True,
+        )
+    except LDAPBindError as exc:
+        logger.error("LDAP service-account bind failed", exc_info=True)
+        raise InternalUserError(
+            "LDAP service bind failed — check LDAP_BIND_DN / LDAP_BIND_PASSWORD"
+        ) from exc
+    except LDAPException as exc:
+        logger.error("LDAP connection error", exc_info=True)
+        raise InternalUserError("LDAP connection error") from exc
+
+    search_filter = f"({_LDAP_USER_ATTR}={escape_filter_chars(username)})"
+
+    with svc_conn:
+        svc_conn.search(
+            search_base=_LDAP_BASE_DN,
+            search_filter=search_filter,
+            search_scope=ldap3.SUBTREE,
+            attributes=[_LDAP_UID_ATTR, _LDAP_ROLE_ATTR, "mail", "userAccountControl"],
+        )
+        entries = svc_conn.entries
+        if not entries:
+            logger.warning("LDAP user not found", extra={"username": username})
+            raise LDAPAuthError("Invalid username or password")
+
+        entry = entries[0]
+        user_dn: str = entry.entry_dn
+
+        # Detect disabled / locked Active Directory accounts
+        uac_raw = getattr(entry, "userAccountControl", None)
+        if uac_raw is not None:
+            uac = int(str(uac_raw))
+            if uac & 0x2:    # ACCOUNTDISABLE
+                logger.warning("LDAP account disabled", extra={"username": username})
+                raise PermissionDeniedError(
+                    f"Account '{username}' is disabled in the directory"
+                )
+            if uac & 0x10:   # LOCKOUT
+                logger.warning("LDAP account locked out", extra={"username": username})
+                raise PermissionDeniedError(
+                    f"Account '{username}' is locked in the directory"
+                )
+
+        uid_raw = getattr(entry, _LDAP_UID_ATTR, None)
+        user_id: str = str(uid_raw) if uid_raw else user_dn
+        mail_raw = getattr(entry, "mail", None)
+        email: str = str(mail_raw) if mail_raw else ""
+        entry_attrs: dict = {
+            _LDAP_ROLE_ATTR: [str(v) for v in (getattr(entry, _LDAP_ROLE_ATTR, None) or [])],
+        }
+
+    # --- step 2: user bind — password verification -------------------------
+    try:
+        user_conn = ldap3.Connection(
+            server,
+            user=user_dn,
+            password=password,
+            auto_bind=auto_bind,
+            raise_exceptions=True,
+        )
+        user_conn.unbind()
+    except LDAPBindError:
+        logger.warning("LDAP password mismatch", extra={"username": username})
+        raise LDAPAuthError("Invalid username or password")
+    except LDAPException as exc:
+        logger.error("LDAP error during user bind", exc_info=True)
+        raise InternalUserError("LDAP connection error during authentication") from exc
+
+    roles = _ldap_extract_roles(entry_attrs)
+    logger.info(
+        "LDAP authentication successful",
+        extra={"username": username, "user_id": user_id},
+    )
+    return UserRecord(
+        user_id=user_id,
+        username=username,
+        email=email,
+        roles=roles,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Local (in-memory) credential store — used as fallback when LDAP is not set
+# ---------------------------------------------------------------------------
+
+#: username → (password, user_id, roles)  — replace with DB in production
+_local_credentials: dict[str, tuple[str, str, list[str]]] = {}
+
+
+def register_local_credentials(username: str, password: str, user_id: str) -> None:
+    """
+    Store a plain-text credential for *username* in the local fallback store.
+
+    .. warning::
+        This is a development/testing helper only.  Production deployments
+        should rely on LDAP (``LDAP_URL`` set) or a proper password-hash store.
+    """
+    _local_credentials[username] = (password, user_id, [])
+
+
+def verify_user_credentials(username: str, password: str) -> UserRecord:
+    """
+    Verify *username* / *password* and return the matching :class:`UserRecord`.
+
+    When ``LDAP_URL`` is set the check is delegated to :func:`ldap_authenticate`.
+    Otherwise the local in-memory credential store is consulted so that
+    development and test environments work without an LDAP server.
+
+    Parameters
+    ----------
+    username:
+        Account login name.
+    password:
+        Plain-text password supplied by the client.
+
+    Returns
+    -------
+    UserRecord
+        The authenticated user record.
+
+    Raises
+    ------
+    LDAPAuthError
+        HTTP 401 — credentials are invalid (LDAP path).
+    ValidationError
+        HTTP 422 — username contains illegal characters.
+    UserNotFoundError
+        HTTP 404 — username not present in the local store (fallback path).
+    PermissionDeniedError
+        HTTP 403 — account is disabled or locked (LDAP path).
+    InternalUserError
+        HTTP 500 — LDAP connectivity error or ldap3 not installed.
+    """
+    _validate_username(username)
+    _validate_no_special_characters(password, "password")
+
+    if _LDAP_URL:
+        return ldap_authenticate(username, password)
+
+    # --- local fallback (dev / test only) ----------------------------------
+    cred = _local_credentials.get(username)
+    if cred is None:
+        user_id_by_name = next(
+            (r.user_id for r in _users.values() if r.username == username), None
+        )
+        if user_id_by_name is None:
+            raise UserNotFoundError(f"User '{username}' not found")
+        cred = (_local_credentials.get(username, ("", "", []))[0], user_id_by_name, [])
+
+    stored_password, user_id, _ = cred
+    if not hmac.compare_digest(stored_password, password):
+        raise LDAPAuthError("Invalid username or password")
+
+    record = _users.get(user_id)
+    if record is None:
+        raise UserNotFoundError(f"User '{username}' not found")
+    if not record.is_active:
+        raise PermissionDeniedError(f"Account '{username}' is inactive")
+
+    logger.info("Local credential check passed", extra={"user_id": user_id})
+    return record
 
 
 # ---------------------------------------------------------------------------

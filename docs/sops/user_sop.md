@@ -8,13 +8,11 @@
 
 Use this runbook when any of the following conditions are observed in production:
 
-- HTTP `401` responses with error code `LDAP_AUTH_ERROR` — user credentials rejected by the LDAP directory or local credential store.
-- HTTP `403` responses with error code `PERMISSION_DENIED` — a user account is disabled or locked in the LDAP directory, or a caller is attempting a privileged operation without the `admin` role.
+- HTTP `403` responses with error code `PERMISSION_DENIED` — a caller is attempting a privileged operation without the `admin` role, or a user account is inactive.
 - HTTP `404` responses with error code `USER_NOT_FOUND` — a credential check or user lookup fails to locate the account.
 - HTTP `409` responses with error code `DUPLICATE_EMAIL` — a create or update operation rejects a duplicate email address.
 - HTTP `422` responses with error code `VALIDATION_ERROR` — malformed username, email, roles, or password input.
-- HTTP `500` responses with error code `INTERNAL_USER_ERROR` — LDAP connectivity failure, missing `ldap3` package, or unexpected internal error in the user service.
-- Log lines matching `LDAP service-account bind failed`, `LDAP connection error`, `LDAP account disabled`, or `LDAP account locked out`.
+- HTTP `500` responses with error code `INTERNAL_USER_ERROR` — unexpected internal error in the user service.
 
 ---
 
@@ -23,8 +21,6 @@ Use this runbook when any of the following conditions are observed in production
 Before executing this SOP, ensure you have:
 
 - Read access to the auth-service application logs (structured JSON log output from `logger = logging.getLogger("auth_service.user")`).
-- Access to the LDAP directory console or admin tooling (e.g., Apache Directory Studio, Active Directory Users and Computers, or equivalent).
-- The LDAP environment variable values currently deployed: `LDAP_URL`, `LDAP_BASE_DN`, `LDAP_BIND_DN`, `LDAP_CONN_TIMEOUT`, `LDAP_USER_ATTR`, `LDAP_ROLE_ATTR`, `LDAP_UID_ATTR`, `LDAP_USE_TLS`.
 - Deployment access (read-only at minimum) to inspect the running container environment.
 - On-call contact details for `@genai-autodoc-demo/security-identity` (see **Escalation Path**).
 
@@ -32,75 +28,48 @@ Before executing this SOP, ensure you have:
 
 ## Step-by-Step Procedure
 
-1. **Identify the error code** from the HTTP response body or structured log entry.  
-   - Check `error_code` field in the JSON response: `LDAP_AUTH_ERROR`, `PERMISSION_DENIED`, `USER_NOT_FOUND`, `DUPLICATE_EMAIL`, `VALIDATION_ERROR`, or `INTERNAL_USER_ERROR`.
-   - Check `http_status` (401, 403, 404, 409, 422, or 500) to confirm the category.
+1. **Identify the error code** from the HTTP response body or structured log entry.
+   - Check `error_code` field in the JSON response: `PERMISSION_DENIED`, `USER_NOT_FOUND`, `DUPLICATE_EMAIL`, `VALIDATION_ERROR`, or `INTERNAL_USER_ERROR`.
+   - Check `http_status` (403, 404, 409, 422, or 500) to confirm the category.
 
-2. **Locate the relevant log entry** in the application log stream.  
+2. **Locate the relevant log entry** in the application log stream.
    - Filter on `logger = auth_service.user`.
-   - Key log messages:  
-     - `"LDAP service-account bind failed"` → service-account credential or connectivity issue.  
-     - `"LDAP connection error"` → network/TLS issue between auth service and LDAP server.  
-     - `"LDAP user not found"` → username not in the directory under the configured `LDAP_BASE_DN`.  
-     - `"LDAP account disabled"` → Active Directory `userAccountControl` bit `0x2` is set.  
-     - `"LDAP account locked out"` → Active Directory `userAccountControl` bit `0x10` is set.  
-     - `"LDAP password mismatch"` → user DN found but second bind failed (wrong password).  
-     - `"LDAP authentication successful"` → success path; check downstream issues if this is present but the API still returns an error.
+   - Key log messages:
+     - `"Local credential check passed"` → successful authentication.
+     - `"User created"` → successful account creation.
+     - `"User updated"` → successful account update.
+     - `"User deactivated"` → successful soft-delete.
+     - `"Failed to create user"` → internal error during `create_user`.
+     - `"Failed to update user"` → internal error during `update_user`.
 
-3. **Confirm LDAP connectivity** from the auth-service host.  
-   - Verify `LDAP_URL` is reachable: `ldapsearch -H $LDAP_URL -x -b '' -s base`.  
-   - Check TLS certificate validity if using `ldaps://` or `LDAP_USE_TLS=1`.  
-   - Verify `LDAP_CONN_TIMEOUT` is not causing premature timeouts under load.
+3. **For 404 `USER_NOT_FOUND`** — confirm the `user_id` or `username` is correct.
+   - Ensure `create_user` was called successfully before `verify_user_credentials` or `get_user`.
+   - For credential failures: ensure `register_local_credentials` was called with the correct username and user ID before calling `verify_user_credentials`.
 
-4. **Verify the service-account credentials** (`LDAP_BIND_DN` / `LDAP_BIND_PASSWORD`).  
-   - Attempt a manual bind: `ldapsearch -H $LDAP_URL -D "$LDAP_BIND_DN" -w "$LDAP_BIND_PASSWORD" -b "$LDAP_BASE_DN" "(objectClass=*)"`.  
-   - If the bind fails, rotate the service-account password and update the secret in the deployment environment.
+4. **For 403 `PERMISSION_DENIED`** — determine which operation triggered it.
+   - Role update or delete: confirm the caller's session token contains the `admin` role.
+   - Account inactive: check `UserRecord.is_active`; re-enable by updating the record if appropriate.
 
-5. **Check the user account in the LDAP directory** (for 401/403 errors on specific users).  
-   - Confirm the user exists under `LDAP_BASE_DN` with attribute `LDAP_USER_ATTR` matching the login name.  
-   - For Active Directory: inspect `userAccountControl` — if bit `0x2` is set, the account is disabled; if bit `0x10` is set, the account is locked.  
-   - Unlock or re-enable the account via the directory admin tooling if appropriate.
+5. **For 409 `DUPLICATE_EMAIL`** — have the caller supply a different email address, or identify and deactivate the duplicate account.
 
-6. **Verify role attribute mapping** if a user authenticates successfully but has incorrect permissions.  
-   - Check that the user's `LDAP_ROLE_ATTR` (default: `memberOf`) contains DN values with `CN` segments matching one of: `viewer`, `developer`, `support`, `ops`, `admin`.  
-   - Confirm `_ldap_extract_roles` will produce the expected role list by inspecting raw group memberships in the directory.
+6. **For 422 `VALIDATION_ERROR`** — return the `message` field to the client. No server-side action is required. Inspect the `detail` field for the specific validation failure (username format, email format, or disallowed role).
 
-7. **Check for missing `ldap3` package** (for 500 `INTERNAL_USER_ERROR` with `"ldap3 package is not installed"` in the log).  
-   - Inspect the container image: `pip show ldap3`.  
-   - Add `ldap3` to `requirements.txt` and rebuild the image.
+7. **For 500 `INTERNAL_USER_ERROR`** — examine the full exception traceback logged under `exc_info=True` in `create_user` or `update_user`. Identify and fix the root cause before redeploying.
 
-8. **Verify local fallback path** (when `LDAP_URL` is not set).  
-   - Confirm `LDAP_URL` environment variable is intentionally absent for the target environment.  
-   - For development/test: ensure `register_local_credentials` has been called with the correct `username`, `password`, and `user_id` before calling `verify_user_credentials`.
-
-9. **Reproduce and confirm resolution** by attempting the failing operation again after applying the fix.  
-   - Confirm the log emits `"LDAP authentication successful"` (LDAP path) or `"Local credential check passed"` (fallback path).
+8. **Reproduce and confirm resolution** by attempting the failing operation again after applying the fix.
 
 ---
 
 ## Decision Points
 
-### `LDAPAuthError` (HTTP 401 · `LDAP_AUTH_ERROR`)
-- **Trigger:** `ldap_authenticate` — user DN not found in the directory (`entries` list is empty after search), or the user-bind (password verification) raises `LDAPBindError`.
-- **Also trigger:** `verify_user_credentials` local-fallback path — `hmac.compare_digest` returns `False` (password mismatch against the local credential store).
-- **Resolution path:** Confirm the username exists in the LDAP directory under `LDAP_BASE_DN`. If the user exists, the password is wrong — advise the user to reset it. If the user does not exist, check whether the `LDAP_USER_ATTR` filter is correct.
+### `UserNotFoundError` (HTTP 404 · `USER_NOT_FOUND`)
+- **Trigger:** `get_user`, `verify_user_credentials`, `delete_user` — the `user_id` is not in `_users`, the `username` is not matched, or the password does not match the stored credential.
+- **Resolution path:** Confirm the `user_id` or `username` is correct. Ensure `create_user` was called before `verify_user_credentials`. Ensure `register_local_credentials` was called with the correct credentials.
 
 ### `PermissionDeniedError` (HTTP 403 · `PERMISSION_DENIED`)
-- **Trigger 1 (LDAP):** `ldap_authenticate` — `userAccountControl & 0x2` (account disabled) or `userAccountControl & 0x10` (account locked).
-- **Trigger 2 (CRUD):** `update_user` — caller attempts a role change without `admin` in `caller_roles`. `delete_user` — caller is not an admin.
-- **Trigger 3 (local fallback):** `verify_user_credentials` — `UserRecord.is_active` is `False`.
-- **Resolution path:** For disabled/locked accounts, re-enable or unlock via the LDAP directory admin. For CRUD permission errors, confirm the API caller's session token contains the correct role claims.
-
-### `InternalUserError` (HTTP 500 · `INTERNAL_USER_ERROR`)
-- **Trigger 1:** `ldap_authenticate` — service-account bind fails (`LDAPBindError`) or an unexpected `LDAPException` is raised during connection or search.
-- **Trigger 2:** `ldap_authenticate` — `import ldap3` raises `ImportError` (package not installed).
-- **Trigger 3:** `create_user` — an unexpected exception is raised after input validation passes.
-- **Trigger 4:** `update_user` — unexpected exception during record update.
-- **Resolution path:** Check LDAP server reachability and service-account credentials. Verify `ldap3` is in the container image. If the error originates in `create_user`/`update_user`, examine the full exception traceback in the logs.
-
-### `UserNotFoundError` (HTTP 404 · `USER_NOT_FOUND`)
-- **Trigger:** `get_user`, `verify_user_credentials` (local fallback), `delete_user` — the `user_id` is not in `_users`, or the `username` is not matched.
-- **Resolution path:** Confirm the `user_id` or `username` is correct. In the local fallback path, ensure `create_user` was called before `verify_user_credentials`.
+- **Trigger 1 (CRUD):** `update_user` — caller attempts a role change without `admin` in `caller_roles`. `delete_user` — caller is not an admin.
+- **Trigger 2 (credential check):** `verify_user_credentials` — `UserRecord.is_active` is `False`.
+- **Resolution path:** For permission errors on CRUD operations, confirm the API caller's session token contains the correct role claims. For inactive accounts, re-enable the account or advise the user to contact an admin.
 
 ### `DuplicateEmailError` (HTTP 409 · `DUPLICATE_EMAIL`)
 - **Trigger:** `create_user` and `update_user` — the supplied email is already present in `_email_index`.
@@ -110,15 +79,20 @@ Before executing this SOP, ensure you have:
 - **Trigger:** `_validate_email`, `_validate_username`, `_validate_no_special_characters`, `_validate_roles` — input does not match the expected format or allowed values.
 - **Resolution path:** Return the error message to the client. No server-side action required. Inspect `detail` field for the specific validation failure.
 
+### `InternalUserError` (HTTP 500 · `INTERNAL_USER_ERROR`)
+- **Trigger 1:** `create_user` — an unexpected exception is raised after input validation passes.
+- **Trigger 2:** `update_user` — unexpected exception during record update.
+- **Resolution path:** Examine the full exception traceback in the logs. Fix the root cause and redeploy.
+
 ---
 
 ## Escalation Path
 
-If the issue cannot be resolved within 30 minutes, or if the root cause involves LDAP directory configuration, service-account compromise, or Active Directory group-membership changes, escalate to:
+If the issue cannot be resolved within 30 minutes, escalate to:
 
-- **Primary owner (file-level):** `@genai-autodoc-demo/security-identity` and `@alice`  
+- **Primary owner (file-level):** `@genai-autodoc-demo/security-identity` and `@alice`
   *(CODEOWNERS: `/auth_service/user.py @genai-autodoc-demo/security-identity @alice`)*
-- **Team escalation:** `@genai-autodoc-demo/security-identity` — Security & Identity team  
+- **Team escalation:** `@genai-autodoc-demo/security-identity` — Security & Identity team
   *(CODEOWNERS: `/auth_service/ @genai-autodoc-demo/security-identity`)*
 - **Global fallback:** `@genai-autodoc-demo/core-eng`
 
@@ -126,7 +100,6 @@ When escalating, provide:
 1. The `error_code` and HTTP status observed.
 2. The affected `username` or `user_id` (PII-safe — do not include passwords).
 3. The relevant structured log lines (including `exc_info` tracebacks if present).
-4. The current values of the LDAP environment variables (redact `LDAP_BIND_PASSWORD`).
 
 ---
 
@@ -143,9 +116,7 @@ If a recent deployment introduced a regression in user authentication:
 
 3. **Confirm the rollback** by verifying that `verify_user_credentials` succeeds for a known-good test user and that the error rate drops to baseline.
 
-4. **Do not roll back LDAP directory changes** as part of this procedure — directory changes require a separate change-control process owned by `@genai-autodoc-demo/security-identity`.
-
-5. **Post-rollback:** Open a tracked incident with `@genai-autodoc-demo/security-identity` and `@alice` to root-cause the regression before re-deploying.
+4. **Post-rollback:** Open a tracked incident with `@genai-autodoc-demo/security-identity` and `@alice` to root-cause the regression before re-deploying.
 
 ---
 
@@ -156,5 +127,5 @@ If a recent deployment introduced a regression in user authentication:
 | **Owner** | `@genai-autodoc-demo/security-identity`, `@alice` |
 | **On-call Contact** | `@genai-autodoc-demo/security-identity` |
 | **Source File** | `auth_service/user.py` |
-| **Last Updated** | Auto-generated from commit `8e37f80` — *feat(auth): add LDAP authentication check for user credentials* |
+| **Last Updated** | Auto-generated — removed LDAP authentication functionality from auth_service/user.py |
 | **Generator** | DocumentationAgent |

@@ -6,7 +6,7 @@
 
 ## Module Overview
 
-`auth_service/user.py` implements the full user-account lifecycle for the auth service: CRUD operations, input validation, typed HTTP-mapped exceptions, and credential verification. Starting from commit `8e37f80`, the module additionally supports LDAP-based authentication via `ldap_authenticate` and `verify_user_credentials`, falling back to a local in-memory credential store when `LDAP_URL` is not set, so development and test environments work without an external directory service.
+`auth_service/user.py` implements the full user-account lifecycle for the auth service: CRUD operations, input validation, and typed HTTP-mapped exceptions. Credential verification is handled against the local in-memory credential store via `verify_user_credentials`, making the module self-contained and suitable for use without any external directory service.
 
 ---
 
@@ -57,7 +57,7 @@ Raised when username, email, roles, or password fail format/content validation.
 ---
 
 #### `PermissionDeniedError(UserError)`
-Raised when the caller lacks the required role (e.g., non-admin attempting a role update or user deletion), or when an LDAP account is disabled or locked.
+Raised when the caller lacks the required role (e.g., non-admin attempting a role update or user deletion), or when an account is inactive.
 
 | Attribute | Value |
 |---|---|
@@ -67,22 +67,12 @@ Raised when the caller lacks the required role (e.g., non-admin attempting a rol
 ---
 
 #### `InternalUserError(UserError)`
-Raised for unexpected internal failures, including LDAP connectivity errors and missing `ldap3` package.
+Raised for unexpected server-side failures.
 
 | Attribute | Value |
 |---|---|
 | `http_status` | `500` |
 | `error_code` | `"INTERNAL_USER_ERROR"` |
-
----
-
-#### `LDAPAuthError(UserError)`  *(added in `8e37f80`)*
-Raised when LDAP credential verification fails — user not found in the directory or password is incorrect.
-
-| Attribute | Value |
-|---|---|
-| `http_status` | `401` |
-| `error_code` | `"LDAP_AUTH_ERROR"` |
 
 ---
 
@@ -102,47 +92,15 @@ Raised when LDAP credential verification fails — user not found in the directo
 
 ---
 
-### LDAP Helpers  *(added in `8e37f80`)*
-
-#### `_ldap_extract_roles(entry_attributes: dict) -> list[str]`
-Private helper. Parses role names from the multi-valued `memberOf` (or `LDAP_ROLE_ATTR`) LDAP attribute. Each value is a full DN; only the `CN` segment is kept and lower-cased for comparison against `_ALLOWED_ROLES`. Returns `["viewer"]` if no known roles are found.
-
----
-
-#### `ldap_authenticate(username: str, password: str) -> UserRecord`
-Verifies credentials against the configured LDAP directory and returns a hydrated `UserRecord`.
-
-**Workflow:**
-1. Bind with service account (`LDAP_BIND_DN`) and search for the user's DN.
-2. Perform a second bind with the found DN and supplied `password` to verify.
-3. Extract `LDAP_UID_ATTR` and `LDAP_ROLE_ATTR`; return a synthetic `UserRecord`.
-
-| Parameter | Type | Description |
-|---|---|---|
-| `username` | `str` | Login name matched against `LDAP_USER_ATTR` |
-| `password` | `str` | Plain-text password (must be sent over TLS/LDAPS) |
-
-**Returns:** `UserRecord`
-
-**Raises:**
-
-| Exception | HTTP | Condition |
-|---|---|---|
-| `LDAPAuthError` | 401 | User not found or password wrong |
-| `PermissionDeniedError` | 403 | Account disabled (`UAC & 0x2`) or locked (`UAC & 0x10`) |
-| `InternalUserError` | 500 | LDAP connectivity error or `ldap3` not installed |
-
----
-
-### Local Credential Store  *(added in `8e37f80`)*
+### Local Credential Store
 
 #### `register_local_credentials(username: str, password: str, user_id: str) -> None`
-Stores a plain-text credential in the local fallback dict `_local_credentials`. **Development/testing only** — do not use in production.
+Stores a plain-text credential in the local credential dict `_local_credentials`. **Development/testing only** — do not use in production.
 
 ---
 
 #### `verify_user_credentials(username: str, password: str) -> UserRecord`
-Verifies credentials and returns the matching `UserRecord`. Delegates to `ldap_authenticate` when `LDAP_URL` is set; otherwise consults the local in-memory store.
+Verifies credentials against the local in-memory credential store and returns the matching `UserRecord`.
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -155,11 +113,9 @@ Verifies credentials and returns the matching `UserRecord`. Delegates to `ldap_a
 
 | Exception | HTTP | Condition |
 |---|---|---|
-| `LDAPAuthError` | 401 | Invalid credentials (both LDAP and local paths) |
 | `ValidationError` | 422 | Username contains illegal characters |
-| `UserNotFoundError` | 404 | Username not in local store (fallback path) |
-| `PermissionDeniedError` | 403 | Account disabled/locked (LDAP path) or inactive (local path) |
-| `InternalUserError` | 500 | LDAP connectivity error or `ldap3` not installed |
+| `UserNotFoundError` | 404 | Username not in local store or password wrong |
+| `PermissionDeniedError` | 403 | Account is inactive |
 
 ---
 
@@ -202,53 +158,43 @@ Returns all user records sorted by `created_at` ascending, optionally filtered t
 
 | Package | Type | Notes |
 |---|---|---|
-| `hmac` | stdlib | Constant-time password comparison in local credential check |
+| `hmac` | stdlib | Constant-time password comparison in credential check |
 | `logging` | stdlib | Structured log output via `logger = logging.getLogger(__name__)` |
-| `os` | stdlib | LDAP environment variable resolution at import time |
 | `re` | stdlib | Email and username regex validation |
 | `time` | stdlib | `created_at` / `updated_at` timestamps |
 | `dataclasses` | stdlib | `UserRecord` dataclass and `field` helpers |
 | `typing` | stdlib | `Optional` type hints |
 | `uuid` | stdlib | UUID generation for `user_id` in `create_user` |
-| `ldap3` | optional | Required only when `LDAP_URL` is set; not installed by default |
 
 ---
 
 ## Usage Example
 
 ```python
-import os
 from auth_service.user import (
     create_user,
     verify_user_credentials,
     register_local_credentials,
-    LDAPAuthError,
     UserNotFoundError,
+    PermissionDeniedError,
 )
 
-# --- LDAP path (set env vars before importing) ---
-os.environ["LDAP_URL"] = "ldaps://ldap.example.com:636"
-os.environ["LDAP_BASE_DN"] = "dc=example,dc=com"
-os.environ["LDAP_BIND_DN"] = "cn=svc-auth,dc=example,dc=com"
-os.environ["LDAP_BIND_PASSWORD"] = "s3cret"
-
-try:
-    record = verify_user_credentials("jdoe", "hunter2")
-    print(record.user_id, record.roles)
-except LDAPAuthError as exc:
-    print(f"Auth failed [{exc.http_status}]: {exc}")
-
-# --- Local fallback path (no LDAP_URL set) ---
+# Create a user account
 user = create_user("alice", "alice@example.com", roles=["developer"])
+
+# Register credentials for the local store
 register_local_credentials("alice", "password123", user.user_id)
 
+# Verify credentials
 try:
     record = verify_user_credentials("alice", "password123")
     print(record.username, record.roles)
 except UserNotFoundError as exc:
-    print(f"Not found [{exc.http_status}]: {exc}")
+    print(f"Not found or wrong password [{exc.http_status}]: {exc}")
+except PermissionDeniedError as exc:
+    print(f"Account inactive [{exc.http_status}]: {exc}")
 ```
 
 ---
 
-*Last updated: auto-generated from commit `8e37f80` — feat(auth): add LDAP authentication check for user credentials*
+*Last updated: auto-generated — removed LDAP authentication functionality from auth_service/user.py*

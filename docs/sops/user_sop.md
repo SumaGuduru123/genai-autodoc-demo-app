@@ -11,7 +11,7 @@ Use this runbook when any of the following conditions are observed in production
 - HTTP `403` responses with error code `PERMISSION_DENIED` — a caller is attempting a privileged operation without the `admin` role, or a user account is inactive.
 - HTTP `404` responses with error code `USER_NOT_FOUND` — a credential check or user lookup fails to locate the account.
 - HTTP `409` responses with error code `DUPLICATE_EMAIL` — a create or update operation rejects a duplicate email address.
-- HTTP `422` responses with error code `VALIDATION_ERROR` — malformed username, email, roles, or password input.
+- HTTP `422` responses with error code `VALIDATION_ERROR` — malformed username, email, or roles input.
 - HTTP `500` responses with error code `INTERNAL_USER_ERROR` — unexpected internal error in the user service.
 
 ---
@@ -127,5 +127,5 @@ If a recent deployment introduced a regression in user authentication:
 | **Owner** | `@genai-autodoc-demo/security-identity`, `@alice` |
 | **On-call Contact** | `@genai-autodoc-demo/security-identity` |
 | **Source File** | `auth_service/user.py` |
-| **Last Updated** | Auto-generated — removed LDAP authentication functionality from auth_service/user.py |
+| **Last Updated** | Auto-generated — removed `_validate_no_special_characters` from auth_service/user.py |
 | **Generator** | DocumentationAgent |

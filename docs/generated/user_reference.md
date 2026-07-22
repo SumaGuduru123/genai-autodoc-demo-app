@@ -197,4 +197,4 @@ except PermissionDeniedError as exc:
 
 ---
 
-*Last updated: auto-generated — removed LDAP authentication functionality from auth_service/user.py*
+*Last updated: auto-generated — removed `_validate_no_special_characters` from auth_service/user.py*

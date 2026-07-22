@@ -209,5 +209,6 @@ customModes:
       - - edit
         - autoApprove: true
       - - execute
+        - autoApprove: true  
+      - - todo
         - autoApprove: true
-      - todo

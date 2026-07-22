@@ -76,7 +76,7 @@ Before executing this SOP, ensure you have:
 - **Resolution path:** Have the caller supply a different email address, or identify and merge/deactivate the duplicate account.
 
 ### `ValidationError` (HTTP 422 · `VALIDATION_ERROR`)
-- **Trigger:** `_validate_email`, `_validate_username`, `_validate_no_special_characters`, `_validate_roles` — input does not match the expected format or allowed values.
+- **Trigger:** `_validate_email`, `_validate_username`, `_validate_roles` — input does not match the expected format or allowed values.
 - **Resolution path:** Return the error message to the client. No server-side action required. Inspect `detail` field for the specific validation failure.
 
 ### `InternalUserError` (HTTP 500 · `INTERNAL_USER_ERROR`)

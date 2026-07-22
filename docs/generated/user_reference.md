@@ -47,7 +47,7 @@ Raised when a `create_user` or `update_user` call supplies an email address alre
 ---
 
 #### `ValidationError(UserError)`
-Raised when username, email, roles, or password fail format/content validation.
+Raised when username, email, or roles fail format/content validation.
 
 | Attribute | Value |
 |---|---|
@@ -113,7 +113,7 @@ Verifies credentials against the local in-memory credential store and returns th
 
 | Exception | HTTP | Condition |
 |---|---|---|
-| `ValidationError` | 422 | Username contains illegal characters |
+| `ValidationError` | 422 | Username fails format validation |
 | `UserNotFoundError` | 404 | Username not in local store or password wrong |
 | `PermissionDeniedError` | 403 | Account is inactive |
 

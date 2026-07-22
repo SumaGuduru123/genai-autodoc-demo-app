@@ -104,17 +104,6 @@ def _validate_username(username: str) -> None:
         )
 
 
-_SPECIAL_CHAR_RE = re.compile(r"[!@#$%^&*(),.?\":{}|<>]")
-
-
-def _validate_no_special_characters(value: str, field_name: str = "value") -> None:
-    """Raise ValidationError if *value* contains any special characters."""
-    if _SPECIAL_CHAR_RE.search(value):
-        raise ValidationError(
-            f"{field_name} must not contain special characters: '{value}'"
-        )
-
-
 def _validate_roles(roles: list[str]) -> None:
     unknown = set(roles) - _ALLOWED_ROLES
     if unknown:
@@ -168,7 +157,6 @@ def verify_user_credentials(username: str, password: str) -> UserRecord:
         HTTP 403 — account is inactive.
     """
     _validate_username(username)
-    _validate_no_special_characters(password, "password")
 
     cred = _local_credentials.get(username)
     if cred is None:

@@ -110,6 +110,18 @@ def _validate_roles(roles: list[str]) -> None:
         raise ValidationError(f"Unknown role(s): {unknown}. Allowed: {_ALLOWED_ROLES}")
 
 
+_SPECIAL_CHAR_RE = re.compile(r"[!@#$%^&*()\-_=+\[\]{}|;:',.<>?/`~\"\\]")
+
+
+def _validate_password_special_char(password: str) -> None:
+    """Raise :class:`ValidationError` if *password* contains no special character."""
+    if not _SPECIAL_CHAR_RE.search(password):
+        raise ValidationError(
+            "Password must contain at least one special character "
+            r"(e.g. ! @ # $ % ^ & * ( ) - _ = + [ ] { } | ; : ' , . < > ? / ` ~ \" \\)"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Local (in-memory) credential store
 # ---------------------------------------------------------------------------
@@ -150,13 +162,14 @@ def verify_user_credentials(username: str, password: str) -> UserRecord:
     Raises
     ------
     ValidationError
-        HTTP 422 — username contains illegal characters.
+        HTTP 422 — username contains illegal characters, or password lacks a special character.
     UserNotFoundError
         HTTP 404 — username not present in the local store.
     PermissionDeniedError
         HTTP 403 — account is inactive.
     """
     _validate_username(username)
+    _validate_password_special_char(password)
 
     cred = _local_credentials.get(username)
     if cred is None:

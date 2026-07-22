@@ -89,7 +89,6 @@ _email_index: dict[str, str] = {}  # email → user_id
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_\-]{3,64}$")
-_USERNAME_SPECIAL_CHARS_RE = re.compile(r"[^a-zA-Z0-9_\-]")
 _ALLOWED_ROLES = {"viewer", "developer", "support", "ops", "admin"}
 
 
@@ -98,35 +97,7 @@ def _validate_email(email: str) -> None:
         raise ValidationError(f"Invalid email address: '{email}'")
 
 
-def _validate_username_no_special_chars(username: str) -> None:
-    """
-    Raise ``ValidationError`` if *username* contains any character that is not
-    a letter, digit, underscore, or hyphen.
-
-    Called before the length/format check so that callers receive an explicit
-    list of the offending characters rather than a generic format message.
-
-    Parameters
-    ----------
-    username:
-        Raw username string to inspect.
-
-    Raises
-    ------
-    ValidationError
-        HTTP 422 — lists every disallowed character found in the username.
-    """
-    bad_chars = sorted(set(_USERNAME_SPECIAL_CHARS_RE.findall(username)))
-    if bad_chars:
-        chars_display = ", ".join(f"'{c}'" for c in bad_chars)
-        raise ValidationError(
-            f"Username '{username}' contains disallowed character(s): {chars_display}. "
-            "Only letters (a–z, A–Z), digits (0–9), underscores (_), and hyphens (-) are permitted."
-        )
-
-
 def _validate_username(username: str) -> None:
-    _validate_username_no_special_chars(username)
     if not _USERNAME_RE.match(username):
         raise ValidationError(
             f"Username '{username}' must be 3–64 characters: letters, digits, _ or -"

@@ -207,7 +207,7 @@ customModes:
     groups:
       - read
       - - edit
-        - autoApprove: false
+        - autoApprove: true
       - - execute
-        - autoApprove: false
+        - autoApprove: true
       - todo

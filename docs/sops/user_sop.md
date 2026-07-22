@@ -11,7 +11,7 @@ Use this runbook when any of the following conditions are observed in production
 - HTTP `403` responses with error code `PERMISSION_DENIED` — a caller is attempting a privileged operation without the `admin` role, or a user account is inactive.
 - HTTP `404` responses with error code `USER_NOT_FOUND` — a credential check or user lookup fails to locate the account.
 - HTTP `409` responses with error code `DUPLICATE_EMAIL` — a create or update operation rejects a duplicate email address.
-- HTTP `422` responses with error code `VALIDATION_ERROR` — malformed username, email, or roles input.
+- HTTP `422` responses with error code `VALIDATION_ERROR` — malformed username, email, roles input, or a password that contains no special character.
 - HTTP `500` responses with error code `INTERNAL_USER_ERROR` — unexpected internal error in the user service.
 
 ---
@@ -52,7 +52,11 @@ Before executing this SOP, ensure you have:
 
 5. **For 409 `DUPLICATE_EMAIL`** — have the caller supply a different email address, or identify and deactivate the duplicate account.
 
-6. **For 422 `VALIDATION_ERROR`** — return the `message` field to the client. No server-side action is required. Inspect the `detail` field for the specific validation failure (username format, email format, or disallowed role).
+6. **For 422 `VALIDATION_ERROR`** — return the `message` field to the client. No server-side action is required. Inspect the `detail` field for the specific validation failure:
+   - **Username format:** must match `^[a-zA-Z0-9_\-]{3,64}$`.
+   - **Email format:** must match RFC-5322 pattern.
+   - **Roles:** must be one of `viewer`, `developer`, `support`, `ops`, `admin`.
+   - **Password special character:** password supplied to `verify_user_credentials` must contain at least one of `! @ # $ % ^ & * ( ) - _ = + [ ] { } | ; : ' , . < > ? / \` ~ " \`. Advise the client to include a special character and retry.
 
 7. **For 500 `INTERNAL_USER_ERROR`** — examine the full exception traceback logged under `exc_info=True` in `create_user` or `update_user`. Identify and fix the root cause before redeploying.
 
@@ -76,8 +80,8 @@ Before executing this SOP, ensure you have:
 - **Resolution path:** Have the caller supply a different email address, or identify and merge/deactivate the duplicate account.
 
 ### `ValidationError` (HTTP 422 · `VALIDATION_ERROR`)
-- **Trigger:** `_validate_email`, `_validate_username`, `_validate_roles` — input does not match the expected format or allowed values.
-- **Resolution path:** Return the error message to the client. No server-side action required. Inspect `detail` field for the specific validation failure.
+- **Trigger:** `_validate_email`, `_validate_username`, `_validate_roles` — input does not match the expected format or allowed values. `_validate_password_special_char` — the password supplied to `verify_user_credentials` contains no special character (checked via `_SPECIAL_CHAR_RE`).
+- **Resolution path:** Return the error message to the client. No server-side action required. Inspect the `detail` field for the specific validation failure. For password failures, advise the client to include at least one special character (e.g. `!`, `@`, `#`, `$`).
 
 ### `InternalUserError` (HTTP 500 · `INTERNAL_USER_ERROR`)
 - **Trigger 1:** `create_user` — an unexpected exception is raised after input validation passes.
@@ -127,5 +131,5 @@ If a recent deployment introduced a regression in user authentication:
 | **Owner** | `@genai-autodoc-demo/security-identity`, `@alice` |
 | **On-call Contact** | `@genai-autodoc-demo/security-identity` |
 | **Source File** | `auth_service/user.py` |
-| **Last Updated** | Auto-generated — removed `_validate_no_special_characters` from auth_service/user.py |
+| **Last Updated** | Auto-generated — added `_validate_password_special_char` to `auth_service/user.py` |
 | **Generator** | DocumentationAgent |

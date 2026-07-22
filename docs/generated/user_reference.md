@@ -6,7 +6,7 @@
 
 ## Module Overview
 
-`auth_service/user.py` implements the full user-account lifecycle for the auth service: CRUD operations, input validation, and typed HTTP-mapped exceptions. Credential verification is handled against the local in-memory credential store via `verify_user_credentials`, making the module self-contained and suitable for use without any external directory service.
+`auth_service/user.py` implements the full user-account lifecycle for the auth service: CRUD operations, input validation, and typed HTTP-mapped exceptions. Credential verification is handled against the local in-memory credential store via `verify_user_credentials`, which now enforces that all passwords contain at least one special character before checking them against stored credentials.
 
 ---
 
@@ -47,7 +47,7 @@ Raised when a `create_user` or `update_user` call supplies an email address alre
 ---
 
 #### `ValidationError(UserError)`
-Raised when username, email, or roles fail format/content validation.
+Raised when username, email, roles, or password strength fail format/content validation.
 
 | Attribute | Value |
 |---|---|
@@ -92,6 +92,32 @@ Raised for unexpected server-side failures.
 
 ---
 
+### Validation Helpers
+
+#### `_validate_email(email: str) -> None`
+Raises `ValidationError` if `email` does not match `_EMAIL_RE` (`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`).
+
+---
+
+#### `_validate_username(username: str) -> None`
+Raises `ValidationError` if `username` does not match `_USERNAME_RE` (`^[a-zA-Z0-9_\-]{3,64}$`).
+
+---
+
+#### `_validate_roles(roles: list[str]) -> None`
+Raises `ValidationError` if any entry in `roles` is not in `_ALLOWED_ROLES` (`viewer`, `developer`, `support`, `ops`, `admin`).
+
+---
+
+#### `_validate_password_special_char(password: str) -> None`
+Raises `ValidationError` if `password` contains no special character as defined by `_SPECIAL_CHAR_RE`.
+
+**Pattern:** `[!@#$%^&*()\-_=+\[\]{}|;:',.<>?/\`~\"\\]`
+
+**Error message:** `"Password must contain at least one special character (e.g. ! @ # $ % ^ & * ( ) - _ = + [ ] { } | ; : ' , . < > ? / \` ~ \" \\)"`
+
+---
+
 ### Local Credential Store
 
 #### `register_local_credentials(username: str, password: str, user_id: str) -> None`
@@ -113,7 +139,7 @@ Verifies credentials against the local in-memory credential store and returns th
 
 | Exception | HTTP | Condition |
 |---|---|---|
-| `ValidationError` | 422 | Username fails format validation |
+| `ValidationError` | 422 | Username fails format validation, or password contains no special character |
 | `UserNotFoundError` | 404 | Username not in local store or password wrong |
 | `PermissionDeniedError` | 403 | Account is inactive |
 
@@ -160,7 +186,7 @@ Returns all user records sorted by `created_at` ascending, optionally filtered t
 |---|---|---|
 | `hmac` | stdlib | Constant-time password comparison in credential check |
 | `logging` | stdlib | Structured log output via `logger = logging.getLogger(__name__)` |
-| `re` | stdlib | Email and username regex validation |
+| `re` | stdlib | Email, username, and password special-character regex validation |
 | `time` | stdlib | `created_at` / `updated_at` timestamps |
 | `dataclasses` | stdlib | `UserRecord` dataclass and `field` helpers |
 | `typing` | stdlib | `Optional` type hints |
@@ -175,6 +201,7 @@ from auth_service.user import (
     create_user,
     verify_user_credentials,
     register_local_credentials,
+    ValidationError,
     UserNotFoundError,
     PermissionDeniedError,
 )
@@ -183,12 +210,15 @@ from auth_service.user import (
 user = create_user("alice", "alice@example.com", roles=["developer"])
 
 # Register credentials for the local store
-register_local_credentials("alice", "password123", user.user_id)
+# Password must contain at least one special character
+register_local_credentials("alice", "p@ssword123!", user.user_id)
 
-# Verify credentials
+# Verify credentials — ValidationError raised if password has no special char
 try:
-    record = verify_user_credentials("alice", "password123")
+    record = verify_user_credentials("alice", "p@ssword123!")
     print(record.username, record.roles)
+except ValidationError as exc:
+    print(f"Invalid input [{exc.http_status}]: {exc}")
 except UserNotFoundError as exc:
     print(f"Not found or wrong password [{exc.http_status}]: {exc}")
 except PermissionDeniedError as exc:
@@ -197,4 +227,4 @@ except PermissionDeniedError as exc:
 
 ---
 
-*Last updated: auto-generated — removed `_validate_no_special_characters` from auth_service/user.py*
+*Last updated: auto-generated — added `_validate_password_special_char` to `auth_service/user.py`*

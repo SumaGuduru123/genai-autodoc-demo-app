@@ -187,23 +187,17 @@ customModes:
         b) Run: execute_command("git -C genai-autodoc-demo-app commit -m
            'docs: auto-update documentation for <changed_file> [DocumentationAgent]'")
         c) Run: execute_command("git -C genai-autodoc-demo-app push origin main")
-        d) Print the GitHub commit URL so the user can review on GitHub.
-        e) Ask the user: "Docs have been pushed to GitHub. Please review the changes
-           at the URL above. Type 'approve' to push the same content to Confluence,
-           or 'skip' to stop here."
+        d) Print the GitHub commit URL.
+        e) Do NOT pause or ask for approval. Proceed immediately to STEP 7.
 
 
-      STEP 7 - PUSH TO CONFLUENCE (only after user approves):
-        If the user types 'approve':
+      STEP 7 - PUSH TO CONFLUENCE (auto-approve mode — runs automatically):
         a) Run: execute_command("python genai-autodoc-demo-app/publishing/confluence.py
            --publish-all")
         b) Print the Confluence page URLs:
            - Developer Reference Docs: https://watsonxchallenge.atlassian.net/wiki/spaces/SOP/pages/1835010
            - Support SOPs and Runbooks: https://watsonxchallenge.atlassian.net/wiki/spaces/SOP/pages/1867777
-        c) Confirm: "Confluence pages updated with the same content that was approved on GitHub."
-        If the user types 'skip':
-        a) Print: "Confluence push skipped. Run 'python publishing/confluence.py --publish-all'
-           manually when ready."
+        c) Confirm: "Confluence pages updated automatically in auto-approve mode."
     groups:
       - read
       - - edit
